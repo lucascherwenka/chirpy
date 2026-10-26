@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"fmt"
 )
 
 func main() {
@@ -11,5 +12,6 @@ func main() {
 		Handler: newMux,
 	}
 	newMux.Handle("/", http.FileServer(http.Dir(".")))
+	fmt.Println("Now serving webpage on :8080")
 	newServer.ListenAndServe()
 }
