@@ -29,7 +29,7 @@ func main() {
 		Addr:    ":8080",
 		Handler: newMux,
 	}
-	apiCfg := apiConfig{}
+	apiCfg := apiConfig{database: dbQueries}
 	newMux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	newMux.HandleFunc("GET /api/healthz", readinessEndpoint)
 	newMux.HandleFunc("GET /admin/metrics", apiCfg.reportHandler)
