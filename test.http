@@ -1,0 +1,16 @@
+GET  http://localhost:8080/api/healthz
+
+###
+
+POST http://localhost:8080/admin/reset
+
+###
+
+GET http://localhost:8080/admin/metrics
+
+###
+
+GET http://localhost:8080/app
+
+
+postgres://postgres:postgres@localhost:5432/chirpy
