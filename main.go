@@ -10,7 +10,9 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/lucascherwenka/chirpy/internal/database"
@@ -19,6 +21,7 @@ import (
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
+	plat := os.Getenv("PLATFORM")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		return
@@ -29,12 +32,13 @@ func main() {
 		Addr:    ":8080",
 		Handler: newMux,
 	}
-	apiCfg := apiConfig{database: dbQueries}
+	apiCfg := apiConfig{database: dbQueries, platform: plat}
 	newMux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	newMux.HandleFunc("GET /api/healthz", readinessEndpoint)
 	newMux.HandleFunc("GET /admin/metrics", apiCfg.reportHandler)
 	newMux.HandleFunc("POST /admin/reset", apiCfg.reportReset)
-	newMux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	newMux.HandleFunc("POST /api/users", apiCfg.createUser)
+	newMux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	fmt.Println("Now serving webpage on :8080")
 	newServer.ListenAndServe()
 }
@@ -46,7 +50,19 @@ func readinessEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) reportReset(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(403)
+		w.Write([]byte("Forbidden"))
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	err := cfg.database.DeleteUsers(r.Context())
+	if err != nil {
+		w.WriteHeader(500)
+		w.Write([]byte(err.Error()))
+		return
+	}
 	cfg.fileserverHits.Store(0)
 	w.WriteHeader(200)
 	w.Write([]byte("Reset"))
@@ -67,6 +83,7 @@ func (cfg *apiConfig) reportHandler(w http.ResponseWriter, r *http.Request) {
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	database       *database.Queries
+	platform       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -93,10 +110,19 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 	respondWithJSON(w, code, map[string]string{"error": msg})
 }
 
-func validateChirp(w http.ResponseWriter, r *http.Request) {
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
+func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	type requestBody struct {
-		Body string `json:"body"`
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	type cleanedBody struct {
@@ -134,5 +160,54 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 	cleaned := cleanedBody{
 		Cleaned_body: strings.Join(words, " "),
 	}
-	respondWithJSON(w, http.StatusOK, cleaned)
+	chirp, err := cfg.database.CreateChirp(r.Context(), database.CreateChirpParams{
+		Body:   cleaned.Cleaned_body,
+		UserID: params.UserID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Something went wrong")
+		return
+	}
+	respondWithJSON(w, 201, Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	})
+
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
+func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
+	type incEmail struct {
+		Email string `json:"email"`
+	}
+
+	params := incEmail{}
+
+	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	user, err := cfg.database.CreateUser(r.Context(), params.Email)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	newUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	respondWithJSON(w, 201, newUser)
 }
