@@ -39,6 +39,8 @@ func main() {
 	newMux.HandleFunc("POST /admin/reset", apiCfg.reportReset)
 	newMux.HandleFunc("POST /api/users", apiCfg.createUser)
 	newMux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
+	newMux.HandleFunc("GET /api/chirps", apiCfg.getChirps)
+	newMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirp)
 	fmt.Println("Now serving webpage on :8080")
 	newServer.ListenAndServe()
 }
@@ -210,4 +212,45 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		Email:     user.Email,
 	}
 	respondWithJSON(w, 201, newUser)
+}
+
+func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
+	list, err := cfg.database.GetChirps(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	myList := []Chirp{}
+	for _, item := range list {
+		myList = append(myList, Chirp{
+			ID:        item.ID,
+			CreatedAt: item.CreatedAt,
+			UpdatedAt: item.UpdatedAt,
+			Body:      item.Body,
+			UserID:    item.UserID,
+		})
+	}
+	respondWithJSON(w, 200, myList)
+}
+
+func (cfg *apiConfig) getChirp(w http.ResponseWriter, r *http.Request) {
+	val := r.PathValue("chirpID")
+	valId, err := uuid.Parse(val)
+	if err != nil {
+		respondWithError(w, 400, "Failed to parse UUID")
+		return
+	}
+	chirp, err := cfg.database.GetChirp(r.Context(), valId)
+	if err != nil {
+		respondWithError(w, 404, "Not Found")
+		return
+	}
+	validChirp := Chirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	}
+	respondWithJSON(w, 200, validChirp)
 }
